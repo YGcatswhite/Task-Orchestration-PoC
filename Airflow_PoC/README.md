@@ -169,3 +169,188 @@ Airflow有自己的一套测试模式配置选项，可以随时通过调用 air
 ### *动态的DAG生成
 
 使用环境变量生成动态的DAG；用嵌入式元数据ALL_TASKS = ["task1", "task2", "task3"]；使用外部配置文件；使用 globals ()动态生成 DAG
+
+## Airflow UI
+
+### DAG视图
+
+环境中有各种导入的DAG，为了过滤DAG可以在每个dag中添加标记
+
+### 网格视图
+
+横跨时间的条形图和DAG网格表示，上面是DAG运行时间的图表，下面是任务的实例
+
+### 图表视图
+
+### 日历视图
+
+### 变量视图
+
+允许您列出、创建、编辑或删除作业期间使用的变量的键值对。默认情况下，如果秘钥中包含任何单词(‘ password’、‘ secret’、‘ passwd’、‘ authority’、‘ api _ key’、‘ apikey’、‘ access _ token’)，变量的值将被隐藏，但可以配置为以明文显示
+
+### 甘特图
+
+允许您分析任务持续时间和重叠，可以快速识别瓶颈，以及大部分时间花费在哪些特定的DAG运行上
+
+### 任务持续时间
+
+过去N次运行中不同任务的持续时间
+
+### 代码视图
+
+可以透明地看到dag代码
+
+## Concepts
+
+### 架构描述
+
+Airflow是一个平台，可以让您构建和运行工作流。工作流表示为DAG，并包含称为Tasks的各个工作不分，考虑了依赖关系和数据流。DAG指定任务之间的依赖关系，以及执行它们和运行重试的顺序，任务本身描述了要做什么，例如获取数据、运行分析、触发其他系统等
+
+Airflow通常由：调度器（处理触发预定的工作流，并将任务提交给执行器运行）、执行器（处理正在运行的任务，在默认的Airflow赞庄重，这会在调度程序中运行所有内容，但大多数适合生产的执行程序实际上会将任务执行推送给worker）、网络服务器（提供了一个方便的用户界面来检查、触发和调试DAG和任务的行为）、DAG文件的文件夹（由调度程序和执行程序读取）、元数据库（由调度程序、执行程序和网络服务器用于存储状态）
+
+![../_images/arch-diag-basic.png](http://apache-airflow-docs.s3-website.eu-central-1.amazonaws.com/docs/apache-airflow/latest/_images/arch-diag-basic.png)
+
+大多数执行器可以引入某些其他组件来让他们和worker交流，比如消息队列
+
+一个DAG包含一系列任务，其中有三种常见的任务类型（Operator、Sensor、Taskflow装饰的@task方法），这些实际上都是BaseOperator的子类
+
+### DAGs
+
+DAG是Airflow的核心概念，将Task收集在一起，用依赖关系和关系组织起来，说明它们应该如何运行
+
+#### 声明DAG
+
+- 使用上下文管理器，可以隐式地将DAG添加到其中的任何内容：
+
+  ```python
+  with DAG(
+      "my_dag_name", start_date=pendulum.datetime(2021, 1, 1, tz="UTC"),
+      schedule_interval="@daily", catchup=False
+  ) as dag:
+      op = EmptyOperator(task_id="task")
+  ```
+
+- 可以使用标准构造函数，将DAG传递给使用的任何operator
+
+  ```python
+  my_dag = DAG("my_dag_name", start_date=pendulum.datetime(2021, 1, 1, tz="UTC"),
+               schedule_interval="@daily", catchup=False)
+  op = EmptyOperator(task_id="task", dag=my_dag)
+  ```
+
+- 可以使用@dag装饰器将函数转换为DAG生成器
+
+  ```python
+  @dag(start_date=pendulum.datetime(2021, 1, 1, tz="UTC"),
+       schedule_interval="@daily", catchup=False)
+  def generate_dag():
+      op = EmptyOperator(task_id="task")
+  
+  dag = generate_dag()
+  ```
+
+#### 任务依赖
+
+Operator通常不会单独成为一个整体，它依赖于其它任务，而其它任务依赖于它。声明任务之间的这些依赖关系构成了DAG结构，有两种一个是使用<<和>>两个运算符，另一个是`set_upstream`和`set_downstream`方法
+
+还可以使用cross_downstream实现相互依赖，也可以使用chain完车管依赖链
+
+#### 加载DAG
+
+Airflow从源文件中加载DAG，并在配置的DAG_FOLDER获取每个文件去执行它，但需要注意只会拉取最顶层的DAG实例对象
+
+#### 运行DAG
+
+当手动或者通过API或者通过API触发；或者在定义的时间表上，该时间表被定义为DAG的一部分
+
+#### DAG任务
+
+注意必须将每个Operator/Task分配给DAG才能运行，Airflow有很多计算DAG的方法无需显式传递：
+
+- 如果在一个块中使用DAG声明Operator
+- 如果在@dag装饰器中声明Operator
+- 如果您将Operator置于具有DAG的Operator的上游或者下游
+
+#### 默认参数
+
+通常DAG的许多运算符需要相同的一组默认参数，可以在创建DAG时传递给DAG，不必为每个Operator单独指定默认参数，它会自动应用于关联的所有Operator
+
+#### DAG装饰器
+
+2.0版本之后有的
+
+#### 控制流
+
+- 可以使用分支来告诉DAG不要运行所有相关任务，而是选择一条或者多条路径向下运行。
+
+#### DAG可视化
+
+### 任务
+
+任务是airflow中的基本执行单元
+
+任务实例与每次运行时将DAG实例化为DAG Run的方式非常相似，任务实例的状态可能有：
+
+- none：任务尚未排队等待执行（尚未满足其依赖关系）
+- scheduled：调度程序已确定满足任务的依赖关系并且应该运行
+- queued：任务已经分配给一个executor并且正在等待一个worker
+- running：任务在worker上运行
+- success：任务完成，没有错误
+- shutdown：任务在运行时被外部请求关闭
+- restarting：任务在运行时被外部请求重启
+- failed：任务在执行过程中出错
+- skipped：由于分支、LatestOnly或类似原因，任务被跳过
+- upstream_failed：上有任务失败，触发规则说我们需要它
+- up_for_retry：任务失败，但仍有重试尝试，将重新安排
+- up_for_reschedule：任务是处于模式的传感器
+- sensing：任务是智能传感器
+- deferred：任务已推迟到触发器
+- removed：自运行开始以来，任务已经从DAG中消失![../_images/task_lifecycle_diagram.png](http://apache-airflow-docs.s3-website.eu-central-1.amazonaws.com/docs/apache-airflow/latest/_images/task_lifecycle_diagram.png)
+
+如果你希望任务具有最大运行时间，请将其`execution_timeout`属性设置`datetime.timedelta`为允许的最大运行时间
+
+### 动态任务映射
+
+动态任务映射允许工作流在运行时根据当前数据创建许多任务，而不是DAG作者需要事先知道有多少任务
+
+比如for循环，调度程序可以根据先前任务的输出执行这个操作，也可以让任务对映射任务的收集输出进行操作
+
+只允许将关键字参数传递给`expand()`.
+
+一个映射任务的结果也可以用作下一个映射任务的输入。
+
+`expand()`映射参数和未映射参数`partial()`
+
+除了单个参数外，还可以传递多个参数进行扩展。这将产生创建“叉积”的效果，使用每个参数组合调用映射任务
+
+### Sensor
+
+Sensor是一种特殊类型的Operator。旨在等待某件事的发生，是基于时间的，等待一个文件或者等待一个外部事件，但它们所做的只是等到事情发生，然后成功，这样他们的下有任务就可以运行了，传感器有三种不同的运行模式：
+
+- poke（默认的）Sensor在其整个运行时占用一个工作槽
+- reschedule：传感器仅在检查时占用一个工作槽，并在检查之前休息一段设定的事件
+- smart sensor：此传感器有一个集中式的版本，可以批量执行所有操作
+
+### 可延迟的Operator和Trigger
+
+这就是可延迟操作*符*的用武之地。可延迟操作符是这样一种操作符，当它知道它必须等待时，它能够暂停自身并释放工作者，并将恢复它的工作交给一个叫做*触发器*的东西。因此，当它被挂起（延迟）时，它不会占用一个工作槽，并且您的集群将在空闲的 Operator 或 Sensor 上浪费更少的资源。
+
+Trigger是小的、异步的Python代码片段，旨在在单个Python进程中一起运行，因为它们是异步的，所以它们能够有效的共存
+
+触发器从头开始设计为高度可用；如果您想运行高可用性设置，只需`triggerer`在多个主机上运行多个副本。很像`scheduler`，它们将自动与正确的锁定和 HA 共存。
+
+[Kubernetes 执行器 — Airflow 文档 (apache-airflow-docs.s3-website.eu-central-1.amazonaws.com)](http://apache-airflow-docs.s3-website.eu-central-1.amazonaws.com/docs/apache-airflow/latest/executor/kubernetes.html)完美地契合公司当前框架
+
+### 调度器
+
+Airflow 调度程序监控所有任务和 DAG，然后在它们的依赖关系完成后触发任务实例。在幕后，调度程序启动一个子进程，该子进程监视并与指定 DAG 目录中的所有 DAG 保持同步。默认情况下，调度程序每分钟一次收集 DAG 解析结果并检查是否可以触发任何活动任务。
+
+关于调度器性能[调度程序 — Airflow Documentation (apache-airflow-docs.s3-website.eu-central-1.amazonaws.com)](http://apache-airflow-docs.s3-website.eu-central-1.amazonaws.com/docs/apache-airflow/latest/concepts/scheduler.html)
+
+### 注意业余优先权值
+
+注意默认值是1不是0，有多种加权方法，上有的下游的和绝对的，**说实话这个地方要比luigi先进很多**
+
+### Param
+
+参数存储在模板上下文中，因此可以在模板中引用它们
