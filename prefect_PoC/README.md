@@ -94,3 +94,153 @@ wait_for
 | 版本                | 一个可选字符串，指定此任务定义的版本。                       |
 
 缓存是指任务运行反映完成状态而不实际运行定义任务的代码的能力。这使您可以有效地重用每次流运行时运行成本可能很高的任务的结果，或者如果任务的输入没有更改，则重用缓存的结果。
+
+#### State
+
+状态是包含有关特定任务运行或流运行状态信息的丰富对象。虽然不需要知道使用Prefect的状态的详细信息，但是可以利用它为工作流赋予能力
+
+#### Flow Runner
+
+流运行器负责为与部署相关的流运行创建和监控基础架构，流运行器只能与部署一起使用，当你通过自己调用流直接运行流时，需要对流执行的环境
+
+流运行器特定于流将在其中运行的环境。Prefect 目前提供以下流运行器：
+
+- [`UniversalFlowRunner`](https://orion-docs.prefect.io/api-ref/prefect/flow-runners/#prefect.flow_runners.UniversalFlowRunner)包含其他流运行器使用的配置选项。您不应直接使用此流运行器。
+- [`SubprocessFlowRunner`](https://orion-docs.prefect.io/api-ref/prefect/flow-runners/#prefect.flow_runners.SubprocessFlowRunner)在本地子流程中运行流程。
+- [`DockerFlowRunner`](https://orion-docs.prefect.io/api-ref/prefect/flow-runners/#prefect.flow_runners.DockerFlowRunner)在 Docker 容器中运行。
+- [`KubernetesFlowRunner`](https://orion-docs.prefect.io/api-ref/prefect/flow-runners/#prefect.flow_runners.KubernetesFlowRunner)在 Kubernetes 作业中运行流程。
+
+要使用流运行器，要把流运行器放到部署规范中（deployment specification）
+
+#### Task Runner
+
+Prefect 目前提供以下内置任务运行器：
+
+- [`ConcurrentTaskRunner`](https://orion-docs.prefect.io/api-ref/prefect/task-runners/#prefect.task_runners.ConcurrentTaskRunner)并发运行任务，允许在 IO 阻塞时切换任务。同步任务将提交到由`anyio`.
+- [`SequentialTaskRunner`](https://orion-docs.prefect.io/api-ref/prefect/task-runners/#prefect.task_runners.SequentialTaskRunner)按顺序运行任务。
+
+prefect-dask是分布式并发？可以添加现有集群
+
+#### 部署
+
+API跟踪所有Prefect流程运行，API不需要实现注册流。使用Prefect可以在本地或者远程环境中调用流，并对其进行跟踪，部署能够让你计划流运行、告诉Prefect API在哪里可以找到流代码、包流代码和配置、为过滤工作队列和UI中的流运行分配标签、从API或UI创建临时流运行
+
+要创建部署，需要：
+
+1. 从将执行的工作流程的流程和任务代码开始
+2. 如果在代码中定义部署，创建一个部署规范，其中包含用于基于该流代码创建部署的设置
+3. 使用部署规范，通过API在Prefect数据库中创建部署对象
+4. 在创建或更新部署的时候，流代码将持久保存到存储位置，API服务器的默认存储或部署规范中指定的存储位置
+
+要运行部署需要：
+
+1. Prefect通过工作队列和代理创建适当的流运行程序实例
+2. 流运行器为流运行提供任何必要的执行环境
+3. 刘云兴从存储中检索流代码
+4. 流运行器从基础设施开启prefect.engine，它执行流程运行代码
+5. Orion编排引擎监控流运行状态，在Prefect Cloud或Prefect API服务器中报告运行状态和日志消息
+
+部署规范也可以用 YAML 编写，并引用流的位置而不是流对象
+
+一个部署规范文件或流定义可以包括多个部署规范，每个部署规范代表一个流的不同部署的设置。给定流程的每个部署规范都必须有一个唯一的名称——Orion 不支持 flow_name/deployment_name 的重复实例。但是，您可以在单个部署文件中包含多个不同流的部署规范。
+
+#### 存储
+
+存储允许配置部署的流代码、任务结果和六节过的持久化方式，如果没有配置其它存储，Prefect使用默认的临时本地存储
+
+本地存储适用于许多本地流程和任务运行场景，但是要是用Docker或K8S运行流，必须设置远程存储，比如S3、Google云存储或者Azure Blob存储
+
+#### 块
+
+块是Prefect的一个原语，可以存储配置并提供与外部系统交互的接口，使用块可以安全地存储凭证，来使用AWS、Github、Slack或你想与Prefect编排的任何其他系统等服务进行身份验证。块还公开了方法，这些方法提供了针对外部系统执行操作的预构建功能。块可用于从S3存储桶下载数据或将数据上传到S3存储桶，从数据库查询数据或将数据写入数据库，或者向Slack通道发送消息
+
+块是Block基类的子类，可以像普通类一样被实例化和使用，例如要实例化一个存储JSON值的块，使用下面的JSON块：
+
+```python
+from prefect.blocks.system import JSON
+
+json_block = JSON(value={"the_answer": 42})
+
+# 如果稍后需要检索此 JSON 值以在流或任务中使用，我们可以使用.save()块上的方法将值存储在 Orion DB 中以供稍后检索：
+json_block.save(name="life-the-universe-everything")
+# 保存存储在 JSON 块中的值时给出的名称可用于稍后在流或任务运行期间检索值时：
+from prefect import flow
+from prefect.blocks.system import JSON
+
+@flow
+def what_is_the_answer():
+    json_block = JSON.load("life-the-universe-everything")
+    print(json_block.value["the_answer"])
+
+what_is_the_answer() # 42
+```
+
+要创建自定义的块，定义一个包含子类的类Block。Block基类建立在Pydantic的基础上，因此可以用BaseModel自定义块：
+
+```python
+from prefect.blocks.core import Block
+
+class Cube(Block):
+    edge_length_inches: float
+
+from prefect.blocks.core import Block
+
+class Cube(Block):
+    edge_length_inches: float
+
+    def get_volume(self):
+        return self.edge_length_inches**3
+
+    def get_surface_area(self):
+        return 6 * self.edge_length_inches**2
+    
+from prefect import flow
+
+rubiks_cube = Cube(edge_length_inches=2.25)
+rubiks_cube.save("rubiks-cube")
+
+@flow
+def calculate_cube_surface_area(cube_name):
+    cube = Cube.load(cube_name)
+    print(cube.get_surface_area())
+
+calculate_cube_surface_area("rubiks-cube") # 30.375
+```
+
+#### 文件系统
+
+文件系统是一个允许从路径读取和写入数据的对象。Prefect提供了两种内置的文件系统类型，覆盖了广泛的用例：
+
+1. LocalFileSystem
+2. RemoteFileSystem
+
+#### 工作队列和代理
+
+工作队列和代理将Prefect Orion服务器的编排环境与用户的执行环境连接起来。工作队列定义要完成的工作，代理轮询特定工作队列以获取新的工作，需要：
+
+1. 在服务器上创建一个工作队列，工作队列为符合其过滤条件的部署收集计划运行
+2. 在执行环境中运行代理，代理轮询特定工作队列以获取新工作，从服务器获取计划工作，并将其部署来执行
+
+要运行协调部署，必须配置至少一个工作队列和代理
+
+工作队列组织代理可以选择执行的工作，工作队列配置决定了将要进行哪些工作；工作队列包含来自与队列条件匹配的任何部署的计划运行，标准可以包括部署、标签、流。
+
+这些标准可以随时修改，为特定队列请求工作的代理进程只会看到匹配的运行
+
+#### 时间表
+
+Prefect 支持多种类型的计划，涵盖广泛的用例并提供大量定制：
+
+- [`CronSchedule`](https://orion-docs.prefect.io/concepts/schedules/#cronschedule)最适合已经熟悉`cron`在其他系统中使用的用户。
+- [`IntervalSchedule`](https://orion-docs.prefect.io/concepts/schedules/#intervalschedule)最适合需要以与绝对时间无关的一致节奏运行的部署。
+- [`RRuleSchedule`](https://orion-docs.prefect.io/concepts/schedules/#rruleschedule)最适合依赖日历逻辑进行简单重复计划、不定期间隔、排除或每月调整的部署。
+
+创建时间表可以通过将schedule参数包括在部署的部署规范中创建计划，要导入要使用的计划类，然后schedule使用该类的实例设置参数；如果有更改计划，则会删除尚未开始的先前计划的流程运行，并创建新的计划流程运行来反映新计划；要删除流部署的所有计划运行，需要更新不带schedule参数的部署
+
+##### 定时计划
+
+CronSchedule根据提供cron字符串创建新的流程来运行
+
+##### 间隔时间表
+
+一个`IntervalSchedule`创建的新流以秒为单位定期运行。间隔是从可选的`anchor_date`
